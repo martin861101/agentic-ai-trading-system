@@ -1,1 +1,16 @@
 # Backend requirements
+fastapi
+uvicorn[standard]
+sqlalchemy
+pydantic
+pydantic-settings
+
+# For database migrations (if we use Alembic)
+# alembic
+
+# For connecting to different databases
+# psycopg2-binary
+
+# Testing
+pytest
+httpx
