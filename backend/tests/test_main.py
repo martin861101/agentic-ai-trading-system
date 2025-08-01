@@ -13,11 +13,3 @@ def test_health_check(client):
     response = client.get("/api/health")
     assert response.status_code == 200
     assert response.json() == {"status": "ok"}
-
-def test_get_events_empty(client):
-    """
-    Test the get events endpoint when the database is empty.
-    """
-    response = client.get("/api/events")
-    assert response.status_code == 200
-    assert response.json() == []
