@@ -197,7 +197,485 @@ class Settings(BaseSettings):
     redis_url: str = "redis://localhost:6379"
     
     # API Keys - UPDATE THESE!
-    travily_api_key: Optional[str] =         "tacticbot": """
+    travily_api_key: Optional[str] = None
+    openai_api_key: Optional[str] = None
+    anthropic_api_key: Optional[str] = None
+
+    # Security
+    secret_key: str = "your-secret-key-change-this"
+    algorithm: str = "HS256"
+    access_token_expire_minutes: int = 30
+
+    # Agent ports
+    chartanalyst_port: int = 8001
+    riskmanager_port: int = 8002
+    marketsentinel_port: int = 8003
+    macroforecaster_port: int = 8004
+    tacticbot_port: int = 8005
+    platformpilot_port: int = 8006
+
+    # Orchestrator
+    orchestrator_port: int = 8000
+
+    class Config:
+        env_file = ".env"
+
+settings = Settings()
+"""
+    create_file("backend/config.py", config_content)
+
+    # Database models
+    models_content = """from sqlalchemy import Column, Integer, String, DateTime, Float, JSON, ForeignKey, Boolean, Text
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.sql import func
+from sqlalchemy.orm import relationship
+
+Base = declarative_base()
+
+class Agent(Base):
+    __tablename__ = "agents"
+
+    agent_id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, unique=True, index=True)
+    model = Column(String)
+    status = Column(String, default="active")
+    endpoint = Column(String)
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+    # Relationships
+    signals = relationship("TradeSignal", back_populates="agent")
+
+class TradeSignal(Base):
+    __tablename__ = "trade_signals"
+
+    signal_id = Column(Integer, primary_key=True, index=True)
+    timestamp = Column(DateTime(timezone=True), server_default=func.now())
+    symbol = Column(String, index=True)
+    timeframe = Column(String)
+    agent_id = Column(Integer, ForeignKey("agents.agent_id"))
+    signal_type = Column(String)  # BUY, SELL, HOLD
+    confidence = Column(Float)
+    signal_data = Column(JSON)
+    macro_context = Column(JSON)
+    processed = Column(Boolean, default=False)
+
+    # Relationships
+    agent = relationship("Agent", back_populates="signals")
+    outcome = relationship("TradeOutcome", back_populates="signal", uselist=False)
+
+class TradeOutcome(Base):
+    __tablename__ = "trade_outcomes"
+
+    outcome_id = Column(Integer, primary_key=True, index=True)
+    signal_id = Column(Integer, ForeignKey("trade_signals.signal_id"), unique=True)
+    entry_price = Column(Float)
+    exit_price = Column(Float)
+    entry_time = Column(DateTime(timezone=True))
+    exit_time = Column(DateTime(timezone=True))
+    pnl = Column(Float)
+    pnl_percentage = Column(Float)
+    success_flag = Column(Boolean)
+    notes = Column(Text)
+
+    # Relationships
+    signal = relationship("TradeSignal", back_populates="outcome")
+
+class MacroEvent(Base):
+    __tablename__ = "macro_events"
+
+    event_id = Column(Integer, primary_key=True, index=True)
+    signal_id = Column(Integer, ForeignKey("trade_signals.signal_id"))
+    event_name = Column(String)
+    event_type = Column(String)  # NEWS, ECONOMIC, EARNINGS, etc.
+    impact_score = Column(Float)
+    forecast_bias = Column(String)  # BULLISH, BEARISH, NEUTRAL
+    source = Column(String)
+    event_time = Column(DateTime(timezone=True))
+    created_at = Column(DateTime(timezone=True), server_default=func.now())
+
+class AgentPerformance(Base):
+    __tablename__ = "agent_performance"
+
+    performance_id = Column(Integer, primary_key=True, index=True)
+    agent_id = Column(Integer, ForeignKey("agents.agent_id"))
+    date = Column(DateTime(timezone=True), server_default=func.now())
+    total_signals = Column(Integer, default=0)
+    successful_signals = Column(Integer, default=0)
+    accuracy_rate = Column(Float, default=0.0)
+    avg_confidence = Column(Float, default=0.0)
+    total_pnl = Column(Float, default=0.0)
+"""
+    create_file("backend/db/models.py", models_content)
+
+    # Database session
+    db_session_content = """from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker, Session
+from sqlalchemy.ext.declarative import declarative_base
+from config import settings
+import logging
+
+logger = logging.getLogger(__name__)
+
+# Create engine
+engine = create_engine(
+    settings.database_url,
+    pool_pre_ping=True,
+    pool_recycle=300,
+)
+
+# Create session factory
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+Base = declarative_base()
+
+def get_db() -> Session:
+    db = SessionLocal()
+    try:
+        yield db
+    except Exception as e:
+        logger.error(f"Database error: {e}")
+        db.rollback()
+        raise
+    finally:
+        db.close()
+
+def init_db():
+    \"\"\"Initialize database tables\"\"\"
+    from db.models import Base
+    Base.metadata.create_all(bind=engine)
+    logger.info("Database tables created successfully")
+"""
+    create_file("backend/db/db_session.py", db_session_content)
+
+    create_file("backend/db/__init__.py", "")
+
+    # Create all agents
+    create_agent_files()
+
+    # Create orchestrator
+    create_orchestrator_files()
+
+def create_agent_files():
+    """Create all agent microservices."""
+
+    agents = [
+        ("chartanalyst", 8001, "Technical pattern recognition and chart analysis"),
+        ("riskmanager", 8002, "Risk assessment and position sizing"),
+        ("marketsentinel", 8003, "Market volatility and scalping opportunities"),
+        ("macroforecaster", 8004, "Macro economic events and news analysis"),
+        ("tacticbot", 8005, "Trade execution timing and tactics"),
+        ("platformpilot", 8006, "Platform automation and trade logging")
+    ]
+
+    for agent_name, port, description in agents:
+        create_agent_service(agent_name, port, description)
+
+def create_agent_service(agent_name: str, port: int, description: str):
+    """Create an individual agent service."""
+
+    # Main agent service
+    main_content = f"""from fastapi import FastAPI, HTTPException, Depends
+from pydantic import BaseModel
+from typing import Dict, List, Optional
+import uvicorn
+import asyncio
+import httpx
+import logging
+from datetime import datetime
+import json
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+app = FastAPI(
+    title="{agent_name.title()} Agent",
+    description="{description}",
+    version="1.0.0"
+)
+
+class AgentInput(BaseModel):
+    symbol: str
+    timeframe: str
+    data: Dict
+    context: Optional[Dict] = None
+
+class AgentOutput(BaseModel):
+    agent_name: str = "{agent_name}"
+    timestamp: datetime
+    symbol: str
+    confidence: float
+    signal_type: Optional[str] = None
+    reasoning: str
+    data: Dict
+    metadata: Optional[Dict] = None
+
+# Agent-specific logic based on type
+{get_agent_logic(agent_name)}
+
+@app.get("/health")
+async def health_check():
+    return {{"status": "healthy", "agent": "{agent_name}", "timestamp": datetime.now()}}
+
+@app.post("/analyze", response_model=AgentOutput)
+async def analyze(input_data: AgentInput):
+    try:
+        logger.info(f"Received analysis request for {{input_data.symbol}}")
+
+        # Process the input data
+        result = await process_signal(input_data)
+
+        # Publish result to event bus (if available)
+        await publish_result(result)
+
+        return result
+
+    except Exception as e:
+        logger.error(f"Analysis failed: {{e}}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+async def publish_result(result: AgentOutput):
+    \"\"\"Publish result to Redis event bus\"\"\"
+    try:
+        # This would connect to Redis in production
+        logger.info(f"Publishing result for {{result.symbol}}")
+    except Exception as e:
+        logger.warning(f"Failed to publish result: {{e}}")
+
+if __name__ == "__main__":
+    uvicorn.run(app, host="0.0.0.0", port={port})
+"""
+
+    create_file(f"backend/agents/{agent_name}/main.py", main_content)
+
+    # Agent utils
+    utils_content = f"""import numpy as np
+import pandas as pd
+from typing import Dict, List, Tuple
+import logging
+
+logger = logging.getLogger(__name__)
+
+class {agent_name.title()}Utils:
+    \"\"\"Utility functions for {agent_name} agent\"\"\"
+
+    @staticmethod
+    def validate_input(data: Dict) -> bool:
+        \"\"\"Validate input data format\"\"\"
+        required_fields = ["symbol", "timeframe"]
+        return all(field in data for field in required_fields)
+
+    @staticmethod
+    def calculate_confidence(factors: Dict) -> float:
+        \"\"\"Calculate confidence score based on multiple factors\"\"\"
+        if not factors:
+            return 0.0
+
+        # Simple weighted average - customize per agent
+        weights = {{
+            "strength": 0.4,
+            "volume": 0.3,
+            "trend": 0.2,
+            "volatility": 0.1
+        }}
+
+        score = 0.0
+        total_weight = 0.0
+
+        for factor, value in factors.items():
+            if factor in weights:
+                score += weights[factor] * value
+                total_weight += weights[factor]
+
+        return min(max(score / total_weight if total_weight > 0 else 0.0, 0.0), 1.0)
+
+    @staticmethod
+    def format_output(analysis: Dict) -> Dict:
+        \"\"\"Format analysis output for consistency\"\"\"
+        return {{
+            "analysis": analysis,
+            "timestamp": pd.Timestamp.now().isoformat(),
+            "version": "1.0"
+        }}
+
+# Agent-specific utility functions
+{get_agent_utils(agent_name)}
+"""
+
+    create_file(f"backend/agents/{agent_name}/utils.py", utils_content)
+
+    # Agent model (AI integration placeholder)
+    model_content = f"""from abc import ABC, abstractmethod
+from typing import Dict, Any
+import logging
+from datetime import datetime
+
+logger = logging.getLogger(__name__)
+
+class BaseModel(ABC):
+    \"\"\"Base class for AI model integration\"\"\"
+
+    def __init__(self, model_name: str = "{agent_name}_model"):
+        self.model_name = model_name
+        self.initialized = False
+
+    @abstractmethod
+    async def predict(self, input_data: Dict) -> Dict:
+        \"\"\"Make prediction using the AI model\"\"\"
+        pass
+
+    @abstractmethod
+    def load_model(self):
+        \"\"\"Load the AI model\"\"\"
+        pass
+
+class {agent_name.title()}Model(BaseModel):
+    \"\"\"AI model for {agent_name} agent\"\"\"
+
+    def __init__(self):
+        super().__init__("{agent_name}_model")
+        self.load_model()
+
+    def load_model(self):
+        \"\"\"Load the specific AI model for this agent\"\"\"
+        # TODO: Integrate with actual AI model (Mistral, Kimi, etc.)
+        logger.info(f"Loading {{self.model_name}} model...")
+        self.initialized = True
+        logger.info(f"{{self.model_name}} model loaded successfully")
+
+    async def predict(self, input_data: Dict) -> Dict:
+        \"\"\"Make prediction using the loaded model\"\"\"
+        if not self.initialized:
+            raise RuntimeError("Model not initialized")
+
+        # TODO: Replace with actual model inference
+        # This is a placeholder implementation
+
+        {get_model_prediction(agent_name)}
+
+        return prediction
+
+# Global model instance
+model = {agent_name.title()}Model()
+"""
+
+    create_file(f"backend/agents/{agent_name}/model.py", model_content)
+    create_file(f"backend/agents/{agent_name}/__init__.py", "")
+
+def get_agent_logic(agent_name: str) -> str:
+    """Generate agent-specific logic based on agent type."""
+
+    logic_map = {
+        "chartanalyst": """
+async def process_signal(input_data: AgentInput) -> AgentOutput:
+    \"\"\"Process chart analysis signal\"\"\"
+    from .model import model
+    from .utils import ChartanalystUtils
+
+    # Extract candle data
+    candles = input_data.data.get("candles", [])
+
+    if not candles:
+        raise ValueError("No candle data provided")
+
+    # Run AI model analysis
+    analysis = await model.predict({
+        "candles": candles,
+        "symbol": input_data.symbol,
+        "timeframe": input_data.timeframe
+    })
+
+    return AgentOutput(
+        timestamp=datetime.now(),
+        symbol=input_data.symbol,
+        confidence=analysis.get("confidence", 0.0),
+        signal_type=analysis.get("signal_type"),
+        reasoning=analysis.get("reasoning", "Chart pattern analysis"),
+        data=analysis,
+        metadata={"agent_type": "technical_analysis"}
+    )
+""",
+        "riskmanager": """
+async def process_signal(input_data: AgentInput) -> AgentOutput:
+    \"\"\"Process risk management analysis\"\"\"
+    from .model import model
+    from .utils import RiskmanagerUtils
+
+    # Get portfolio info and signal details
+    portfolio = input_data.data.get("portfolio", {})
+    signal_data = input_data.data.get("signal", {})
+
+    # Run risk analysis
+    analysis = await model.predict({
+        "portfolio": portfolio,
+        "signal": signal_data,
+        "symbol": input_data.symbol
+    })
+
+    return AgentOutput(
+        timestamp=datetime.now(),
+        symbol=input_data.symbol,
+        confidence=analysis.get("confidence", 0.0),
+        reasoning=analysis.get("reasoning", "Risk assessment analysis"),
+        data=analysis,
+        metadata={"agent_type": "risk_management"}
+    )
+""",
+        "marketsentinel": """
+async def process_signal(input_data: AgentInput) -> AgentOutput:
+    \"\"\"Process market volatility analysis\"\"\"
+    from .model import model
+    from .utils import MarketsentinelUtils
+
+    # Get market data
+    market_data = input_data.data.get("market_data", {})
+    volatility_data = input_data.data.get("volatility", {})
+
+    # Run volatility analysis
+    analysis = await model.predict({
+        "market_data": market_data,
+        "volatility": volatility_data,
+        "symbol": input_data.symbol,
+        "timeframe": input_data.timeframe
+    })
+
+    return AgentOutput(
+        timestamp=datetime.now(),
+        symbol=input_data.symbol,
+        confidence=analysis.get("confidence", 0.0),
+        reasoning=analysis.get("reasoning", "Market volatility analysis"),
+        data=analysis,
+        metadata={"agent_type": "volatility_analysis"}
+    )
+""",
+        "macroforecaster": """
+async def process_signal(input_data: AgentInput) -> AgentOutput:
+    \"\"\"Process macro economic analysis\"\"\"
+    from .model import model
+    from .utils import MacroforecasterUtils
+
+    # Get news and economic data
+    news_data = input_data.data.get("news", [])
+    economic_data = input_data.data.get("economic_events", [])
+
+    # Run macro analysis
+    analysis = await model.predict({
+        "news": news_data,
+        "economic_events": economic_data,
+        "symbol": input_data.symbol,
+        "context": input_data.context
+    })
+
+    return AgentOutput(
+        timestamp=datetime.now(),
+        symbol=input_data.symbol,
+        confidence=analysis.get("confidence", 0.0),
+        reasoning=analysis.get("reasoning", "Macro economic analysis"),
+        data=analysis,
+        metadata={"agent_type": "macro_analysis"}
+    )
+""",
+        "tacticbot": """
 async def process_signal(input_data: AgentInput) -> AgentOutput:
     \"\"\"Process tactical trading analysis\"\"\"
     from .model import model
@@ -1986,498 +2464,7 @@ health-check:
 	@echo "Checking service health..."
 	curl -f http://localhost:8000/health || echo "Orchestrator: DOWN"
 """
-    create_file("Makefile", makefile_content)
+    create__file("Makefile", makefile_content)
 
 if __name__ == "__main__":
     create_project_structure()
-    openai_api_key: Optional[str] = None
-    anthropic_api_key: Optional[str] = None
-    
-    # Security
-    secret_key: str = "your-secret-key-change-this"
-    algorithm: str = "HS256"
-    access_token_expire_minutes: int = 30
-    
-    # Agent ports
-    chartanalyst_port: int = 8001
-    riskmanager_port: int = 8002
-    marketsentinel_port: int = 8003
-    macroforecaster_port: int = 8004
-    tacticbot_port: int = 8005
-    platformpilot_port: int = 8006
-    
-    # Orchestrator
-    orchestrator_port: int = 8000
-    
-    class Config:
-        env_file = ".env"
-
-settings = Settings()
-"""
-    create_file("backend/config.py", config_content)
-    
-    # Database models
-    models_content = """from sqlalchemy import Column, Integer, String, DateTime, Float, JSON, ForeignKey, Boolean, Text
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.sql import func
-from sqlalchemy.orm import relationship
-
-Base = declarative_base()
-
-class Agent(Base):
-    __tablename__ = "agents"
-    
-    agent_id = Column(Integer, primary_key=True, index=True)
-    name = Column(String, unique=True, index=True)
-    model = Column(String)
-    status = Column(String, default="active")
-    endpoint = Column(String)
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-    
-    # Relationships
-    signals = relationship("TradeSignal", back_populates="agent")
-
-class TradeSignal(Base):
-    __tablename__ = "trade_signals"
-    
-    signal_id = Column(Integer, primary_key=True, index=True)
-    timestamp = Column(DateTime(timezone=True), server_default=func.now())
-    symbol = Column(String, index=True)
-    timeframe = Column(String)
-    agent_id = Column(Integer, ForeignKey("agents.agent_id"))
-    signal_type = Column(String)  # BUY, SELL, HOLD
-    confidence = Column(Float)
-    signal_data = Column(JSON)
-    macro_context = Column(JSON)
-    processed = Column(Boolean, default=False)
-    
-    # Relationships
-    agent = relationship("Agent", back_populates="signals")
-    outcome = relationship("TradeOutcome", back_populates="signal", uselist=False)
-
-class TradeOutcome(Base):
-    __tablename__ = "trade_outcomes"
-    
-    outcome_id = Column(Integer, primary_key=True, index=True)
-    signal_id = Column(Integer, ForeignKey("trade_signals.signal_id"), unique=True)
-    entry_price = Column(Float)
-    exit_price = Column(Float)
-    entry_time = Column(DateTime(timezone=True))
-    exit_time = Column(DateTime(timezone=True))
-    pnl = Column(Float)
-    pnl_percentage = Column(Float)
-    success_flag = Column(Boolean)
-    notes = Column(Text)
-    
-    # Relationships  
-    signal = relationship("TradeSignal", back_populates="outcome")
-
-class MacroEvent(Base):
-    __tablename__ = "macro_events"
-    
-    event_id = Column(Integer, primary_key=True, index=True)
-    signal_id = Column(Integer, ForeignKey("trade_signals.signal_id"))
-    event_name = Column(String)
-    event_type = Column(String)  # NEWS, ECONOMIC, EARNINGS, etc.
-    impact_score = Column(Float)
-    forecast_bias = Column(String)  # BULLISH, BEARISH, NEUTRAL
-    source = Column(String)
-    event_time = Column(DateTime(timezone=True))
-    created_at = Column(DateTime(timezone=True), server_default=func.now())
-
-class AgentPerformance(Base):
-    __tablename__ = "agent_performance"
-    
-    performance_id = Column(Integer, primary_key=True, index=True)
-    agent_id = Column(Integer, ForeignKey("agents.agent_id"))
-    date = Column(DateTime(timezone=True), server_default=func.now())
-    total_signals = Column(Integer, default=0)
-    successful_signals = Column(Integer, default=0)
-    accuracy_rate = Column(Float, default=0.0)
-    avg_confidence = Column(Float, default=0.0)
-    total_pnl = Column(Float, default=0.0)
-"""
-    create_file("backend/db/models.py", models_content)
-    
-    # Database session
-    db_session_content = """from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker, Session
-from sqlalchemy.ext.declarative import declarative_base
-from config import settings
-import logging
-
-logger = logging.getLogger(__name__)
-
-# Create engine
-engine = create_engine(
-    settings.database_url,
-    pool_pre_ping=True,
-    pool_recycle=300,
-)
-
-# Create session factory
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-
-Base = declarative_base()
-
-def get_db() -> Session:
-    db = SessionLocal()
-    try:
-        yield db
-    except Exception as e:
-        logger.error(f"Database error: {e}")
-        db.rollback()
-        raise
-    finally:
-        db.close()
-
-def init_db():
-    \"\"\"Initialize database tables\"\"\"
-    from db.models import Base
-    Base.metadata.create_all(bind=engine)
-    logger.info("Database tables created successfully")
-"""
-    create_file("backend/db/db_session.py", db_session_content)
-    
-    create_file("backend/db/__init__.py", "")
-    
-    # Create all agents
-    create_agent_files()
-    
-    # Create orchestrator
-    create_orchestrator_files()
-
-def create_agent_files():
-    """Create all agent microservices."""
-    
-    agents = [
-        ("chartanalyst", 8001, "Technical pattern recognition and chart analysis"),
-        ("riskmanager", 8002, "Risk assessment and position sizing"),
-        ("marketsentinel", 8003, "Market volatility and scalping opportunities"),
-        ("macroforecaster", 8004, "Macro economic events and news analysis"), 
-        ("tacticbot", 8005, "Trade execution timing and tactics"),
-        ("platformpilot", 8006, "Platform automation and trade logging")
-    ]
-    
-    for agent_name, port, description in agents:
-        create_agent_service(agent_name, port, description)
-
-def create_agent_service(agent_name: str, port: int, description: str):
-    """Create an individual agent service."""
-    
-    # Main agent service
-    main_content = f"""from fastapi import FastAPI, HTTPException, Depends
-from pydantic import BaseModel
-from typing import Dict, List, Optional
-import uvicorn
-import asyncio
-import httpx
-import logging
-from datetime import datetime
-import json
-
-# Configure logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
-app = FastAPI(
-    title="{agent_name.title()} Agent",
-    description="{description}",
-    version="1.0.0"
-)
-
-class AgentInput(BaseModel):
-    symbol: str
-    timeframe: str
-    data: Dict
-    context: Optional[Dict] = None
-
-class AgentOutput(BaseModel):
-    agent_name: str = "{agent_name}"
-    timestamp: datetime
-    symbol: str
-    confidence: float
-    signal_type: Optional[str] = None
-    reasoning: str
-    data: Dict
-    metadata: Optional[Dict] = None
-
-# Agent-specific logic based on type
-{get_agent_logic(agent_name)}
-
-@app.get("/health")
-async def health_check():
-    return {{"status": "healthy", "agent": "{agent_name}", "timestamp": datetime.now()}}
-
-@app.post("/analyze", response_model=AgentOutput)
-async def analyze(input_data: AgentInput):
-    try:
-        logger.info(f"Received analysis request for {{input_data.symbol}}")
-        
-        # Process the input data
-        result = await process_signal(input_data)
-        
-        # Publish result to event bus (if available)
-        await publish_result(result)
-        
-        return result
-        
-    except Exception as e:
-        logger.error(f"Analysis failed: {{e}}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-async def publish_result(result: AgentOutput):
-    \"\"\"Publish result to Redis event bus\"\"\"
-    try:
-        # This would connect to Redis in production
-        logger.info(f"Publishing result for {{result.symbol}}")
-    except Exception as e:
-        logger.warning(f"Failed to publish result: {{e}}")
-
-if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port={port})
-"""
-    
-    create_file(f"backend/agents/{agent_name}/main.py", main_content)
-    
-    # Agent utils
-    utils_content = f"""import numpy as np
-import pandas as pd
-from typing import Dict, List, Tuple
-import logging
-
-logger = logging.getLogger(__name__)
-
-class {agent_name.title()}Utils:
-    \"\"\"Utility functions for {agent_name} agent\"\"\"
-    
-    @staticmethod
-    def validate_input(data: Dict) -> bool:
-        \"\"\"Validate input data format\"\"\"
-        required_fields = ["symbol", "timeframe"]
-        return all(field in data for field in required_fields)
-    
-    @staticmethod
-    def calculate_confidence(factors: Dict) -> float:
-        \"\"\"Calculate confidence score based on multiple factors\"\"\"
-        if not factors:
-            return 0.0
-        
-        # Simple weighted average - customize per agent
-        weights = {{
-            "strength": 0.4,
-            "volume": 0.3, 
-            "trend": 0.2,
-            "volatility": 0.1
-        }}
-        
-        score = 0.0
-        total_weight = 0.0
-        
-        for factor, value in factors.items():
-            if factor in weights:
-                score += weights[factor] * value
-                total_weight += weights[factor]
-        
-        return min(max(score / total_weight if total_weight > 0 else 0.0, 0.0), 1.0)
-    
-    @staticmethod
-    def format_output(analysis: Dict) -> Dict:
-        \"\"\"Format analysis output for consistency\"\"\"
-        return {{
-            "analysis": analysis,
-            "timestamp": pd.Timestamp.now().isoformat(),
-            "version": "1.0"
-        }}
-
-# Agent-specific utility functions
-{get_agent_utils(agent_name)}
-"""
-    
-    create_file(f"backend/agents/{agent_name}/utils.py", utils_content)
-    
-    # Agent model (AI integration placeholder)
-    model_content = f"""from abc import ABC, abstractmethod
-from typing import Dict, Any
-import logging
-from datetime import datetime
-
-logger = logging.getLogger(__name__)
-
-class BaseModel(ABC):
-    \"\"\"Base class for AI model integration\"\"\"
-    
-    def __init__(self, model_name: str = "{agent_name}_model"):
-        self.model_name = model_name
-        self.initialized = False
-    
-    @abstractmethod
-    async def predict(self, input_data: Dict) -> Dict:
-        \"\"\"Make prediction using the AI model\"\"\"
-        pass
-    
-    @abstractmethod
-    def load_model(self):
-        \"\"\"Load the AI model\"\"\"
-        pass
-
-class {agent_name.title()}Model(BaseModel):
-    \"\"\"AI model for {agent_name} agent\"\"\"
-    
-    def __init__(self):
-        super().__init__("{agent_name}_model")
-        self.load_model()
-    
-    def load_model(self):
-        \"\"\"Load the specific AI model for this agent\"\"\"
-        # TODO: Integrate with actual AI model (Mistral, Kimi, etc.)
-        logger.info(f"Loading {{self.model_name}} model...")
-        self.initialized = True
-        logger.info(f"{{self.model_name}} model loaded successfully")
-    
-    async def predict(self, input_data: Dict) -> Dict:
-        \"\"\"Make prediction using the loaded model\"\"\"
-        if not self.initialized:
-            raise RuntimeError("Model not initialized")
-        
-        # TODO: Replace with actual model inference
-        # This is a placeholder implementation
-        
-        {get_model_prediction(agent_name)}
-        
-        return prediction
-
-# Global model instance
-model = {agent_name.title()}Model()
-"""
-    
-    create_file(f"backend/agents/{agent_name}/model.py", model_content)
-    create_file(f"backend/agents/{agent_name}/__init__.py", "")
-
-def get_agent_logic(agent_name: str) -> str:
-    """Generate agent-specific logic based on agent type."""
-    
-    logic_map = {
-        "chartanalyst": """
-async def process_signal(input_data: AgentInput) -> AgentOutput:
-    \"\"\"Process chart analysis signal\"\"\"
-    from .model import model
-    from .utils import ChartanalystUtils
-    
-    # Extract candle data
-    candles = input_data.data.get("candles", [])
-    
-    if not candles:
-        raise ValueError("No candle data provided")
-    
-    # Run AI model analysis
-    analysis = await model.predict({
-        "candles": candles,
-        "symbol": input_data.symbol,
-        "timeframe": input_data.timeframe
-    })
-    
-    return AgentOutput(
-        timestamp=datetime.now(),
-        symbol=input_data.symbol,
-        confidence=analysis.get("confidence", 0.0),
-        signal_type=analysis.get("signal_type"),
-        reasoning=analysis.get("reasoning", "Chart pattern analysis"),
-        data=analysis,
-        metadata={"agent_type": "technical_analysis"}
-    )
-""",
-        "riskmanager": """
-async def process_signal(input_data: AgentInput) -> AgentOutput:
-    \"\"\"Process risk management analysis\"\"\"
-    from .model import model
-    from .utils import RiskmanagerUtils
-    
-    # Get portfolio info and signal details
-    portfolio = input_data.data.get("portfolio", {})
-    signal_data = input_data.data.get("signal", {})
-    
-    # Run risk analysis
-    analysis = await model.predict({
-        "portfolio": portfolio,
-        "signal": signal_data,
-        "symbol": input_data.symbol
-    })
-    
-    return AgentOutput(
-        timestamp=datetime.now(),
-        symbol=input_data.symbol,
-        confidence=analysis.get("confidence", 0.0),
-        reasoning=analysis.get("reasoning", "Risk assessment analysis"),
-        data=analysis,
-        metadata={"agent_type": "risk_management"}
-    )
-""",
-        "marketsentinel": """
-async def process_signal(input_data: AgentInput) -> AgentOutput:
-    \"\"\"Process market volatility analysis\"\"\"
-    from .model import model
-    from .utils import MarketsentinelUtils
-    
-    # Get market data
-    market_data = input_data.data.get("market_data", {})
-    volatility_data = input_data.data.get("volatility", {})
-    
-    # Run volatility analysis
-    analysis = await model.predict({
-        "market_data": market_data,
-        "volatility": volatility_data,
-        "symbol": input_data.symbol,
-        "timeframe": input_data.timeframe
-    })
-    
-    return AgentOutput(
-        timestamp=datetime.now(),
-        symbol=input_data.symbol,
-        confidence=analysis.get("confidence", 0.0),
-        reasoning=analysis.get("reasoning", "Market volatility analysis"),
-        data=analysis,
-        metadata={"agent_type": "volatility_analysis"}
-    )
-""",
-        "macroforecaster": """
-async def process_signal(input_data: AgentInput) -> AgentOutput:
-    \"\"\"Process macro economic analysis\"\"\"
-    from .model import model
-    from .utils import MacroforecasterUtils
-    
-    # Get news and economic data
-    news_data = input_data.data.get("news", [])
-    economic_data = input_data.data.get("economic_events", [])
-    
-    # Run macro analysis
-    analysis = await model.predict({
-        "news": news_data,
-        "economic_events": economic_data,
-        "symbol": input_data.symbol,
-        "context": input_data.context
-    })
-    
-    return AgentOutput(
-        timestamp=datetime.now(),
-        symbol=input_data.symbol,
-        confidence=analysis.get("confidence", 0.0),
-        reasoning=analysis.get("reasoning", "Macro economic analysis"),
-        data=analysis,
-        metadata={"agent_type": "macro_analysis"}
-    )
-""",
-        "tacticbot": """
-async def process_signal(input_data: AgentInput) -> AgentOutput:
-    \"\"\"Process tactical trading analysis\"\"\"
-    from .model import model
-    from .utils import TacticbotUtils
-    
-    # Get aggregated signals from other agents
-    agent_signals = input_data.data.get("agent_signals", [])
-    market_conditions = input_data.data.get("market_conditions", {})
-    
-    # Run tactical analysis
-    analysis = await model.predict({
-        "agent_signals": agent_signals,
-        "market_conditions
