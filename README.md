@@ -71,15 +71,65 @@ Modify the models easily in `agents/*.py` files.
 ## 📁 Project Structure
 
 ```
-agentic_custom_project/
-├── agents/
-├── services/
-├── run.py
-├── gradio_ui.py
-├── Dockerfile
-├── .env
-├── requirements.txt
+agentic-ai-trading-system/
+├── backend/
+│   ├── agents/
+│   │   ├── chartanalyst/
+│   │   │   ├── main.py
+│   │   │   ├── model.py
+│   │   │   └── utils.py
+│   │   ├── riskmanager/
+│   │   │   ├── main.py
+│   │   │   ├── model.py
+│   │   │   └── utils.py
+│   │   ├── marketsentinel/
+│   │   │   ├── main.py
+│   │   │   ├── model.py
+│   │   │   └── utils.py
+│   │   ├── macroforecaster/
+│   │   │   ├── main.py
+│   │   │   ├── model.py
+│   │   │   └── utils.py
+│   │   ├── tacticbot/
+│   │   │   ├── main.py
+│   │   │   ├── model.py
+│   │   │   └── utils.py
+│   │   └── platformpilot/
+│   │       ├── main.py
+│   │       ├── model.py
+│   │       ├── utils.py
+│   │       └── automation.py
+│   ├── orchestrator/
+│   │   ├── event_bus.py
+│   │   ├── decision_compiler.py
+│   │   ├── api.py
+│   │   ├── models.py
+│   │   └── main.py
+│   ├── db/
+│   │   ├── migrations/
+│   │   └── db_session.py
+│   ├── config.py
+│   └── requirements.txt
+├── frontend/
+│   ├── public/
+│   ├── src/
+│   │   ├── components/
+│   │   │   ├── LiveSignalFeed.js
+│   │   │   ├── ChartOverlay.js
+│   │   │   ├── AgentLogsPanel.js
+│   │   │   ├── MacroEventFeed.js
+│   │   │   └── TradeBook.js
+│   │   ├── services/
+│   │   │   ├── websocket.js
+│   │   │   └── api.js
+│   │   ├── utils/
+│   │   │   └── time.js
+│   │   └── App.js
+│   ├── package.json
+│   └── vite.config.js
+├── docker-compose.yml
 └── README.md
+
 ```
 
 ---
