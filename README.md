@@ -1,45 +1,257 @@
+
+
 # Agentic AI Trading System
 
-A modular, microservices-based AI trading system with specialized agents for different aspects of trading analysis and execution.
+A modular, agentic, event-driven trading platform. Each AI agent is a microservice with explainable outputs and robust orchestration. Real-time analytics, containerization, and extensibility are first-class design goals.
 
-## Architecture
+---
 
-- **ChartAnalyst**: Pattern recognition and technical analysis
-- **RiskManager**: Position sizing and risk assessment
-- **MarketSentinel**: Volatility monitoring and scalping opportunities
-- **MacroForecaster**: News analysis and macro event impact
-- **TacticBot**: Trade execution logic and timing
-- **PlatformPilot**: Platform automation and logging
+## 🚀 Features
 
-## Quick Start
+- **Microservice AI Agents:** Each agent (ChartAnalyst, RiskManager, MacroForecaster, etc.) is a containerized FastAPI service.
+- **Event Bus Architecture:** Agents communicate and coordinate via Redis Pub/Sub for low-latency, event-driven workflows.
+- **Central Orchestrator:** Aggregates agent signals, applies business logic, logs outcomes, and triggers platform actions.
+- **Full Logging & Analytics:** PostgreSQL (or TimescaleDB) stores all predictions, agent outputs, and trade outcomes for analytics and dashboards.
+- **Real-time Frontend:** Modern React dashboard with live signals, reasonings, TradingView overlays, and outcome analytics.
+- **DevOps-Ready:** Docker Compose for easy orchestration and local dev; supports CI/CD and scaling.
+- **Extendable & Explainable:** Add new agents, swap LLMs, and audit all agent decisions with clear reasoning chains.
 
-1. Copy environment file: `cp .env.example .env`
-2. Update API keys in `.env`
-3. Run: `docker-compose up -d`
-4. Access dashboard: http://localhost:3000
-5. API documentation: http://localhost:8000/docs
+---
 
-## Development
+## 🏗️ Architecture Overview
 
-### Backend
-```bash
-cd backend
-pip install -r requirements.txt
-python -m uvicorn orchestrator.api:app --reload
+```mermaid
+graph TD
+    A[Market Event/Price Tick] --> B[ChartAnalyst]
+    A --> C[MarketSentinel]
+    A --> D[MacroForecaster]
+    B --> E[RiskManager]
+    C --> E
+    D --> E
+    E --> F[TacticBot]
+    F --> G[PlatformPilot]
+    G --> H[PostgreSQL DB]
+    G --> I[Frontend Dashboard]
 ```
 
-### Frontend
-```bash
-cd frontend
-npm install
-npm start
+**Flow:**  
+1. New market event → published to event bus  
+2. Specialist agents analyze and emit signals  
+3. RiskManager aggregates and evaluates  
+4. TacticBot decides entry/exit  
+5. PlatformPilot triggers trade, logs, and updates frontend
+
+---
+
+## 📁 Folder Structure
+
+```
+agentic-ai-trading-system/
+├── backend/
+│   ├── agents/
+│   │   ├── chartanalyst/         # e.g. FastAPI service
+│   │   ├── riskmanager/
+│   │   ├── marketsentinel/
+│   │   ├── macroforecaster/
+│   │   ├── tacticbot/
+│   │   └── platformpilot/
+│   ├── orchestrator/
+│   │   ├── event_bus.py
+│   │   ├── decision_compiler.py
+│   │   ├── api.py
+│   │   └── main.py
+│   ├── db/
+│   │   ├── models.py
+│   │   ├── db_session.py
+│   │   └── migrations/
+│   ├── utils/
+│   │   ├── logger.py
+│   │   └── helpers.py
+├── frontend/
+│   ├── components/
+│   │   ├── LiveSignalFeed.js
+│   │   ├── ChartOverlay.js
+│   │   ├── AgentLogsPanel.js
+│   │   ├── MacroEventFeed.js
+│   │   └── TradeBook.js
+│   ├── services/
+│   │   ├── websocket.js
+│   │   └── api.js
+│   ├── utils/
+│   │   └── time.js
+│   └── App.js
+├── docker-compose.yml
+├── .env.example
+├── README.md
 ```
 
-## Features
+---
 
-- Real-time WebSocket communication
-- Event-driven agent coordination
-- Comprehensive logging and analytics
-- Modern React dashboard with TradingView integration
-- Docker containerization
-- PostgreSQL database with TimescaleDB extensions
+## 🧠 Agents & Their Roles
+
+| Agent              | Model Example      | Description                                                                 |
+|--------------------|-------------------|-----------------------------------------------------------------------------|
+| ChartAnalyst       | Mistral, Llama    | Analyzes price charts, detects patterns/zones, publishes technical signals  |
+| RiskManager        | Kimi K2, Claude   | Consumes signals, applies risk logic, outputs sizes/stop-loss/risk metrics  |
+| MarketSentinel     | Qwen3, GPT-4      | Monitors volatility, news, market regimes, raises alerts                    |
+| MacroForecaster    | TNG Chimera       | Assesses macro/news impact, forecasts directional bias                      |
+| TacticBot          | GLM, Horizon      | Aggregates all signals, triggers entry/exit, encodes trade tactics          |
+| PlatformPilot      | Kimi Dev 72B      | Logs actions, triggers platform automation, serves as audit & automation    |
+
+**Each agent is a REST API container with a clear JSON contract.**
+
+---
+
+## 🔗 Event Bus Flow
+
+- All agent communication is via Redis Pub/Sub (or Kafka).
+- New market event → bus → specialist agents consume → output signals → bus → downstream agents consume (event loop).
+- Orchestrator listens, aggregates, and finalizes trade actions.
+
+Example event channels:
+- `market_events`, `chartanalyst_out`, `riskmanager_out`, `final_signals`, etc.
+
+---
+
+## 🗄️ Database Design
+
+**PostgreSQL (or TimescaleDB)**
+
+- `agents`: Registered agents, models, status
+- `trade_signals`: Each agent’s signal, raw and processed
+- `trade_outcomes`: Actual trade results, PnL, success
+- `macro_events`: Global news/context per signal
+
+---
+
+## 🖥️ Frontend
+
+- **LiveSignalFeed:** Real-time signals, confidence, reasoning (WebSocket)
+- **ChartOverlay:** Interactive TradingView chart with agent overlays
+- **AgentLogsPanel:** Per-agent reasoning, chain-of-thought
+- **MacroEventFeed:** Macro/news context timeline
+- **TradeBook:** Trades, PnL, analytics
+
+---
+
+## 🛠️ Technology Stack
+
+| Layer      | Tech Choices                                    |
+|------------|-------------------------------------------------|
+| Backend    | Python, FastAPI, Redis/Kafka, PostgreSQL        |
+| Frontend   | React, TradingView Widget, WebSockets           |
+| DevOps     | Docker, Docker Compose, GitHub Actions          |
+| Analytics  | Python (Pandas), Jupyter, Superset/Metabase     |
+| Models     | Mistral, Kimi, Qwen3, GLM, TNG, Horizon, etc.   |
+
+---
+
+## ⚡ Quickstart
+
+1. **Clone the repo:**
+   ```bash
+   git clone https://github.com/martin861101/agentic-ai-trading-system.git
+   cd agentic-ai-trading-system
+   ```
+2. **Copy env file:**
+   ```bash
+   cp .env.example .env
+   # Edit .env to set DB password and API keys if needed
+   ```
+3. **Build & Run (Docker Compose):**
+   ```bash
+   docker-compose up --build
+   ```
+4. **Access Dashboard:**  
+   [http://localhost:3000](http://localhost:3000)
+
+---
+
+## 💡 Extending the System
+
+- **Add New Agent:**  
+  Copy `/backend/agents/chartanalyst/app.py`, edit logic, add to `docker-compose.yml`.
+
+- **Swap LLMs/Models:**  
+  Update agent’s internal inference logic; maintain API and event bus contract.
+
+- **Add Analytics:**  
+  Use DB logs for notebooks or BI tools (Metabase, Superset).
+
+- **Scale Out:**  
+  Deploy agents/orchestrator as separate containers or on Kubernetes.
+
+---
+
+## 🧑‍💻 Development & Contribution
+
+- Agents must:
+  - Accept POSTed JSON for inputs.
+  - Respond with JSON (signal, confidence, reasoning).
+  - Publish results to event bus channel.
+- Orchestrator:
+  - Listen to agent channels, aggregate, apply rules, log to DB.
+- Frontend:
+  - Use WebSocket/API for live updates.
+  - Render agent explanations and analytics.
+
+**PRs are welcome!**  
+- Please provide clear commit messages and test coverage.
+- Open issues for features or agent/model integrations.
+
+---
+
+## 📝 Example: Agent Endpoint Contract
+
+**POST** `/agents/chartanalyst`  
+```json
+{
+  "timestamp": "2025-08-01T13:37:00Z",
+  "symbol": "AAPL",
+  "price_data": [ ... ]
+}
+```
+
+**Response:**
+```json
+{
+  "patterns": ["bullish engulfing"],
+  "confidence": 0.87,
+  "reasoning": "Pattern detected with high volume breakout.",
+  "timestamp": "2025-08-01T13:37:00Z"
+}
+```
+
+---
+
+## 🛡️ License
+
+MIT. See [LICENSE](LICENSE).
+
+---
+
+## 🙋 FAQ
+
+**Q: Can I use my own LLMs/Quant libraries?**  
+A: Yes, just update agent logic.
+
+**Q: Can it run on the cloud?**  
+A: Yes, deploy each service as a container on any cloud infra.
+
+**Q: Can I add more agents?**  
+A: Yes! The architecture is designed for modular growth.
+
+---
+
+## 🤝 Credits
+
+Built by [martin861101](https://github.com/martin861101) and contributors.
+
+---
+
+**Questions? PRs? Feature Requests? [Open an issue!](https://github.com/martin861101/agentic-ai-trading-system/issues)**
+
+---
+
+This README is ready for production and onboarding contributors.  
+Copy, edit, and enjoy building your agentic AI trading platform!
